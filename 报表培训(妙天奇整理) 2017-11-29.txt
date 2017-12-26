@@ -1,0 +1,153 @@
+报表思路
+	1项目经理的责任
+		不要凌乱整改，要模块化整改，例如要改把提取全改，而非就一个表
+	2报表的存储结构
+		cq02 03的如何定位一张报表的数据
+		dayreport  mothereport 的存储结构
+	3报表的数值取值
+		1归集
+			缴款的情况：me14 16 17（注意grzhzt等情况 区分实缴和应缴）
+			其他业务的情况 ：mp01 cp01 me01 ce01 开户销户特别注意时间，以及客户的统一口径
+			注意和其他表的勾稽关系，归集勾稽比较复杂
+		2提取
+			财务去统计 jygnh    
+			业务去统计 sql   提取原因
+			mp02 mp09 mp10 mp12
+		3贷款 
+			make_DKYWYBB_Data 
+		    财务去统计 121 122
+			业务去统计：根据情况去处理数据，需要和财务统计的数据进行一致
+			lb01 la10 lb18 lb16 lb19（逾期）
+			（缴存情况表的逾期贷款额，需要和客户注意统计方式）
+		4财务
+			fa10 根据科目去取值 一定要区分 ztbh kjnd kjyf 注意     10101__01   和  1010101%
+			fa01 账户取值
+			其他的表 fb34 35 定期的购买，fb01资金调拨
+			fa06 07   04  05
+		5如何去对勾稽关系？
+			加加减减
+			上期存量贷款+本期发放-本期回收=本期存量贷款
+			                1        2
+			1 100         2        1     101    手工的放入cq02
+			2  1         3        2    2
+	4最后特别说明
+	基础表
+	制作报表的时候
+		1.ztbh不要遗漏
+		2.能分管理部尽量分
+		3.格式，写完报表，打印检查。
+	上新报表
+		1.数据初始化
+	部分地方根据需要，增加基表
+	
+	
+	
+===========按照财务统计提取==========================
+ 1-- 提取额 
+      select round(nvl(sum(jffse - dffse), 0), 2)
+        from fa07 a, fa06 b
+       where b.ywzt != '0'
+         and b.ywlx in ('GJ27', 'GJ28', 'GJ29', 'GJ20')
+         and a.kmbh = '201'
+         and a.ywpzh = b.ywpzh
+         and a.yhbh = cur_yhbh.jgdm
+         and b.ywrq = d_tjsjq;
+    
+     2 -- 公积金冲还贷 
+      select round(nvl(sum(jffse - dffse), 0), 2)
+        from fa07 a, fa06 b
+       where b.ywzt != '0'
+         and b.ywlx in ('DK04', 'DK07', 'DK10')
+         and a.kmbh = '201'
+         and a.ywpzh = b.ywpzh
+         and a.yhbh = cur_yhbh.jgdm
+         and b.ywrq = d_tjsjq;
+    
+     3 -- 提取红冲 
+      select round(nvl(sum(abs(jffse - dffse)), 0), 2)
+        from fa07 a, fa06 b
+       where b.ywzt != '0'
+         and b.ywlx = 'GJ21'
+         and a.kmbh = '201'
+         and a.ywpzh = b.ywpzh
+         and a.yhbh = cur_yhbh.jgdm
+         and b.ywrq = d_tjsjq;
+
+
+提取金额=1+2-3
+=========================按照业务统计提取===================	
+            
+SELECT t1.jgdm,--按管理部或者提取原因统计提取，将提取提取历史和现在的统计出来加冲还贷减去提取退回
+       --t1.now_money,
+       --now_per_num FROM
+       t1.now_money-nvl(t2.money,0) AS money,  --提取的钱
+       now_per_num - nvl(per_num,0) FROM    --提取人数      
+           
+       (select  
+               t1.jgdm AS jgdm,
+              sum(nvl(t1.per_num, 0)) now_per_num,
+              sum(nvl(t1.money, 0)) now_money
+         from aa10 t
+         left join (SELECT count(1) as per_num,  --提取统计
+                          sum(a2.hzzqje) as money,
+                          a2.tqyy,
+                          a1.jgdm 
+                     FROM mp09 a1, mp02 a2, sp06 a3
+                    WHERE a1.ywlx in ('MP010', 'MP023', 'ME032')
+                      and a1.ywdjh = a2.ywdjh
+                      and a1.yhbh = a3.jgdm
+                      and a3.ztbh = '01'
+                      and a1.jzrq > add_months(last_day(to_date('201707','yyyymm')), -1)
+                      AND a1.jzrq < last_day(to_date('201707','yyyymm')) + 1
+                    group by a2.tqyy, a1.jgdm 
+                   union all
+                   SELECT count(1) as per_num,--提取历史统计
+                          sum(a2.hzzqje) as money,
+                          a2.tqyy,
+                          a1.jgdm 
+                     FROM mp12 a1, mp02 a2, sp06 a3
+                    WHERE a1.ywlx in ('MP010', 'MP023', 'ME032')
+                      and a1.ywdjh = a2.ywdjh
+                      and a1.yhbh = a3.jgdm
+                      and a3.ztbh = '01'
+                      and a1.jzrq > add_months(last_day(to_date('201707','yyyymm')), -1)
+                      AND a1.jzrq < last_day(to_date('201707','yyyymm')) + 1
+                    group by a2.tqyy, a1.jgdm 
+                   union all
+                   SELECT  count(1)as per_num,--冲还贷
+                            sum(a.hzzqje) as money,
+                            a.tqyy,
+                            e.jgdm
+                    from mp02 a, lb20 b, lb04 c,sp06 d, me01 e
+                   where a.ywlx = 'LA007'
+                     and a.ywdjh = 'LA007'||b.sjlsh
+                     and a.ywhj in('98','99')
+                     and b.ywlsh = c.ywlsh
+                     and a.dwbh=e.dwbh
+                     and e.yhbh = d.jgdm
+                     and d.ztbh='01'
+                     and c.zxrzsj >= to_date('201707', 'YYYYMM')
+                     and c.zxrzsj < add_months(to_date('201707', 'YYYYMM'),1)
+                    group by a.tqyy, e.jgdm ) t1
+           on t.aaa102 = t1.tqyy
+        where t.aaa100 = 'TQYY'
+        --group by t.aaa102,t.aaa103,t1.jgdm) t1
+        group BY t1.jgdm) t1
+        LEFT JOIN
+        (select nvl(COUNT(1),0) as per_num,  --提取退回
+                            sum(nvl(a3.hzzqje,0)) as money,
+                            a4.sjgljg AS jgdm
+                       from mp10 a1, mp12 a2, mp02 a3, sp06 a4
+                      where a1.yywbh = a2.tdnum
+                        and a2.ywdjh = a3.ywdjh
+                        and a2.yhbh = a4.jgdm
+                        and a4.ztbh = '01'
+                        and a1.jzrq > add_months(last_day(to_date('201707','yyyymm')), -1)
+                        and a1.jzrq <= last_day(to_date('201707','yyyymm'))
+                      group by a4.sjgljg) t2 ON t1.jgdm=t2.jgdm;
+
+					  
+本质是： 提取额=mp09的提取 + mp12中历史的提取 +冲还贷 -提取退回
+这sql是把这四个部分合计在一起的，根据需要来group by 看着乱的话，分开写也没毛病
+	
+	
